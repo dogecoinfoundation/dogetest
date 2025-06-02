@@ -61,13 +61,19 @@ func (t *RpcTransport) GetInfo() (*Info, error) {
 	return result, nil
 }
 
-func (t *RpcTransport) Generate(i int) error {
-	_, err := t.Request("generate", []any{i})
+func (t *RpcTransport) Generate(i int) ([]string, error) {
+	res, err := t.Request("generate", []any{i})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	var result []string
+	err = json.Unmarshal(*res, &result)
+	if err != nil {
+		return nil, fmt.Errorf("json-rpc unmarshal error: %v | %v", err, string(*res))
+	}
+
+	return result, nil
 }
 
 func (t *RpcTransport) ListUnspent(address string) ([]UTXO, error) {

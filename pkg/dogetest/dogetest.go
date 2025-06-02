@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
-	"dogecoin.org/dogetest/pkg/rpc"
+	"github.com/dogecoinfoundation/dogetest/pkg/rpc"
+	"github.com/shirou/gopsutil/process"
 )
 
 type DogeTest struct {
@@ -35,7 +37,7 @@ type AddressSetup struct {
 func (d *DogeTest) SetupAddresses(addressSetups []AddressSetup) (*AddressBook, error) {
 	addresses := make([]Address, len(addressSetups))
 
-	err := d.Rpc.Generate(100)
+	_, err := d.Rpc.Generate(100)
 	if err != nil {
 		return nil, err
 	}
@@ -63,21 +65,19 @@ func (d *DogeTest) SetupAddresses(addressSetups []AddressSetup) (*AddressBook, e
 		}
 	}
 
-	err = d.ConfirmBlocks()
+	blocks, err := d.ConfirmBlocks()
 	if err != nil {
 		return nil, err
 	}
 
 	return &AddressBook{
 		Addresses: addresses,
+		Blocks:    blocks,
 	}, nil
 }
 
 func NewDogeTest(config DogeTestConfig) (*DogeTest, error) {
-	err := os.RemoveAll(config.ConfigPath)
-	if err != nil {
-		return nil, err
-	}
+	os.RemoveAll(config.ConfigPath)
 
 	port, err := findAvailablePort(config.Host)
 	if err != nil {
@@ -111,13 +111,13 @@ func (d *DogeTest) GetWallet(address string) (*Wallet, error) {
 	}, nil
 }
 
-func (d *DogeTest) ConfirmBlocks() error {
-	err := d.Rpc.Generate(1)
+func (d *DogeTest) ConfirmBlocks() ([]string, error) {
+	blocks, err := d.Rpc.Generate(1)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return blocks, nil
 }
 
 func (d *DogeTest) Start() error {
@@ -159,6 +159,31 @@ func (d *DogeTest) Stop() error {
 	err := os.RemoveAll(d.config.ConfigPath)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (d *DogeTest) ClearProcess() error {
+	processes, err := process.Processes()
+	if err != nil {
+		fmt.Println("Error fetching processes:", err)
+		return err
+	}
+
+	targetName := "dogecoind.exe"
+
+	for _, p := range processes {
+		name, err := p.Name()
+
+		if err == nil && strings.Contains(strings.ToLower(name), strings.ToLower(targetName)) {
+			pid := p.Pid
+			fmt.Printf("Found process: %s (PID: %d)\n", name, pid)
+			err = p.Kill()
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

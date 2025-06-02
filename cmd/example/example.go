@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"dogecoin.org/dogetest/pkg/dogetest"
+	"github.com/dogecoinfoundation/dogetest/pkg/dogetest"
 )
 
 func main() {

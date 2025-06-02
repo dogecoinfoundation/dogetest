@@ -3,7 +3,7 @@ package dogetest
 import (
 	"fmt"
 
-	"dogecoin.org/dogetest/pkg/rpc"
+	"github.com/dogecoinfoundation/dogetest/pkg/rpc"
 )
 
 type Address struct {
@@ -14,6 +14,7 @@ type Address struct {
 
 type AddressBook struct {
 	Addresses []Address
+	Blocks    []string
 }
 
 type Wallet struct {
