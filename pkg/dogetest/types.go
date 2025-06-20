@@ -2,8 +2,10 @@ package dogetest
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/dogecoinfoundation/dogetest/pkg/rpc"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 type Address struct {
@@ -42,4 +44,16 @@ func (a *AddressBook) GetAddress(label string) (Address, error) {
 		}
 	}
 	return Address{}, fmt.Errorf("address not found")
+}
+
+type StdoutLogConsumer struct {
+	Name   string
+	PubKey string
+}
+
+// Accept prints the log to stdout
+func (lc *StdoutLogConsumer) Accept(l testcontainers.Log) {
+	content := string(l.Content)
+
+	log.Println(content)
 }

@@ -1,32 +1,32 @@
 package dogetest
 
 import (
+	"context"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/docker/go-connections/nat"
 	"github.com/dogecoinfoundation/dogetest/pkg/rpc"
-	"github.com/shirou/gopsutil/process"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 type DogeTest struct {
-	Host         string
-	Port         int
-	installation string
-	cmd          *exec.Cmd
-	Rpc          *rpc.RpcTransport
-	config       DogeTestConfig
+	Host      string
+	Rpc       *rpc.RpcTransport
+	config    DogeTestConfig
+	Container testcontainers.Container
 }
 
 type DogeTestConfig struct {
-	Host             string
-	InstallationPath string
-	ConfigPath       string
+	Host          string
+	NetworkName   string
+	LogContainers bool
+	Port          int
 }
 
 type AddressSetup struct {
@@ -77,25 +77,8 @@ func (d *DogeTest) SetupAddresses(addressSetups []AddressSetup) (*AddressBook, e
 }
 
 func NewDogeTest(config DogeTestConfig) (*DogeTest, error) {
-	os.RemoveAll(config.ConfigPath)
-
-	port, err := findAvailablePort(config.Host)
-	if err != nil {
-		return nil, err
-	}
-
-	rpcClient := rpc.NewRpcTransport(&rpc.Config{
-		RpcUrl:  "http://localhost:" + strconv.Itoa(port),
-		RpcUser: "test",
-		RpcPass: "test",
-	})
-
 	return &DogeTest{
-		Host:         config.Host,
-		Port:         port,
-		installation: config.InstallationPath,
-		Rpc:          rpcClient,
-		config:       config,
+		config: config,
 	}, nil
 }
 
@@ -121,114 +104,106 @@ func (d *DogeTest) ConfirmBlocks() ([]string, error) {
 }
 
 func (d *DogeTest) Start() error {
-	configPath, err := d.writeTempConfig(d.Port)
+	absPathContext, err := filepath.Abs(filepath.Join("."))
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.Command(d.installation, "-regtest", "-reindex-chainstate", "-min", "-splash=0", "-conf="+configPath)
-	d.cmd = cmd
+	portVal := strconv.Itoa(d.config.Port)
 
-	err = cmd.Start()
-	if err != nil {
-		return err
+	logConsumers := []testcontainers.LogConsumer{}
+	if d.config.LogContainers {
+		logConsumer := &StdoutLogConsumer{
+			Name: "dogecoin",
+		}
+
+		logConsumers = append(logConsumers, logConsumer)
 	}
 
-	err = d.waitForPort("localhost:"+strconv.Itoa(d.Port), 10*time.Second)
+	networks := []string{}
+	if d.config.NetworkName != "" {
+		networks = append(networks, d.config.NetworkName)
+	} else {
+		ctx := context.Background()
+
+		net, err := network.New(ctx, network.WithDriver("bridge"))
+		if err != nil {
+			return err
+		}
+		networks = append(networks, net.Name)
+	}
+
+	req := testcontainers.ContainerRequest{
+		FromDockerfile: testcontainers.FromDockerfile{
+			Context:    absPathContext,
+			Dockerfile: "Dockerfile.dogecoin",
+			KeepImage:  false,
+			BuildArgs: map[string]*string{
+				"PORT": &portVal,
+			},
+		},
+		Networks:     networks,
+		Name:         "dogecoin-" + portVal,
+		ExposedPorts: []string{portVal + "/tcp"},
+		Env: map[string]string{
+			"PORT": portVal,
+		},
+		WaitingFor: wait.ForLog("init message: Done loading").WithStartupTimeout(10 * time.Second),
+		LogConsumerCfg: &testcontainers.LogConsumerConfig{
+			Opts:      []testcontainers.LogProductionOption{testcontainers.WithLogProductionTimeout(10 * time.Second)},
+			Consumers: logConsumers,
+		},
+	}
+
+	ctx := context.Background()
+
+	dogecoinContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
 	if err != nil {
 		return err
 	}
 
 	for {
-		_, err := d.Rpc.GetInfo()
-		if err == nil {
-			break // success
+		if dogecoinContainer.IsRunning() {
+			break
 		}
 
-		time.Sleep(1 * time.Second) // or however long you want between tries
+		time.Sleep(1 * time.Second)
 	}
 
-	fmt.Println("DogeTest started")
+	for {
+		handlerPort, err := dogecoinContainer.MappedPort(ctx, nat.Port(portVal+"/tcp"))
+		if err == nil {
+			fmt.Printf("Handler port mapped to %s\n", handlerPort.Port())
+			break
+		}
+
+		fmt.Printf("Waiting for handler port to be mapped... %s\n", err)
+
+		time.Sleep(1 * time.Second)
+	}
+
+	ip, _ := dogecoinContainer.Host(ctx)
+	mappedPort, _ := dogecoinContainer.MappedPort(ctx, nat.Port(portVal+"/tcp"))
+
+	fmt.Printf("Dogecoin is running at %s:%s\n", ip, mappedPort.Port())
+
+	d.Container = dogecoinContainer
+
+	d.Rpc = rpc.NewRpcTransport(&rpc.Config{
+		RpcUrl:  "http://" + d.config.Host + ":" + mappedPort.Port(),
+		RpcUser: "test",
+		RpcPass: "test",
+	})
 
 	return nil
 }
 
 func (d *DogeTest) Stop() error {
-	d.cmd.Process.Kill()
-
-	err := os.RemoveAll(d.config.ConfigPath)
-	if err != nil {
-		return err
-	}
-
+	d.Container.Terminate(context.Background())
 	return nil
-}
-
-func (d *DogeTest) ClearProcess() error {
-	processes, err := process.Processes()
-	if err != nil {
-		fmt.Println("Error fetching processes:", err)
-		return err
-	}
-
-	targetName := "dogecoind.exe"
-
-	for _, p := range processes {
-		name, err := p.Name()
-
-		if err == nil && strings.Contains(strings.ToLower(name), strings.ToLower(targetName)) {
-			pid := p.Pid
-			fmt.Printf("Found process: %s (PID: %d)\n", name, pid)
-			err = p.Kill()
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (d *DogeTest) waitForPort(address string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for {
-		conn, err := net.DialTimeout("tcp", address, 1*time.Second)
-		if err == nil {
-			conn.Close()
-			return nil // Port is open!
-		}
-
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for %s", address)
-		}
-
-		time.Sleep(200 * time.Millisecond) // small delay before retry
-	}
-}
-
-func (d *DogeTest) writeTempConfig(port int) (string, error) {
-	tempDir, err := os.MkdirTemp("", "doge-test")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp directory: %v", err)
-	}
-
-	content := fmt.Sprintf(`regtest=1
-rpcuser=test
-rpcpassword=test
-rpcport=%d
-server=1
-txindex=1  # Optional: Enables transaction index for address tracking
-rpcbind=0.0.0.0
-rpcallowip=0.0.0.0/0  # Temporarily allow all IPs for testing`, port)
-
-	filePath := filepath.Join(tempDir, "dogecoin.conf")
-	err = os.WriteFile(filePath, []byte(content), 0644)
-	if err != nil {
-		return "", fmt.Errorf("failed to write config file: %v", err)
-	}
-
-	return filePath, nil
 }
 
 func findAvailablePort(host string) (int, error) {
@@ -240,25 +215,4 @@ func findAvailablePort(host string) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no available port found")
-}
-
-func findDogeInstallation() (string, error) {
-	possiblePaths := []string{
-		"C:\\Program Files\\Dogecoin\\daemon\\dogecoind.exe",
-		"/usr/local/bin/dogecoind",
-	}
-
-	for _, path := range possiblePaths {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	exeName := "dogecoind"
-	path, err := exec.LookPath(exeName)
-	if err != nil {
-		return "", fmt.Errorf("doge installation not found")
-	}
-
-	return path, nil
 }

@@ -2,15 +2,15 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/dogecoinfoundation/dogetest/pkg/dogetest"
 )
 
 func main() {
 	dogeTest, err := dogetest.NewDogeTest(dogetest.DogeTestConfig{
-		Host:             "localhost",
-		InstallationPath: "C:\\Program Files\\Dogecoin\\daemon\\dogecoind.exe",
-		ConfigPath:       "C:\\Users\\danielw\\AppData\\Roaming\\Dogecoin\\regtest",
+		Host: "localhost",
+		Port: 22555,
 	})
 	if err != nil {
 		fmt.Println("Failed to create doge test:", err)
@@ -24,6 +24,8 @@ func main() {
 		fmt.Println("Failed to start doge test:", err)
 		return
 	}
+
+	time.Sleep(2 * time.Second)
 
 	addressBook, err := dogeTest.SetupAddresses([]dogetest.AddressSetup{
 		{
