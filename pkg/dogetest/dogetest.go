@@ -216,7 +216,10 @@ func (d *DogeTest) Start() error {
 }
 
 func (d *DogeTest) Stop() error {
-	d.Container.Terminate(context.Background())
+	if d.Container != nil {
+		d.Container.Terminate(context.Background())
+	}
+
 	return nil
 }
 

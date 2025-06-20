@@ -17,7 +17,7 @@ RUN wget https://github.com/dogecoin/dogecoin/releases/download/v${DOGE_VERSION}
 # Create Dogecoin data directory
 WORKDIR /dogecoin
 
-ENV PORT=22555
+ARG PORT
 
 RUN echo rpcuser=test > /dogecoin/dogecoin.conf
 RUN echo rpcpassword=test >> /dogecoin/dogecoin.conf
