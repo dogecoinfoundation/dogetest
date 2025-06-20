@@ -2,7 +2,12 @@ package dogetest
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
+	"log"
+	"math/rand"
+	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -14,12 +19,14 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+//go:embed Dockerfile.dogecoin
+var dockerfileData []byte
+
 type DogeTest struct {
-	Host       string
-	Rpc        *rpc.RpcTransport
-	config     DogeTestConfig
-	Container  testcontainers.Container
-	MappedPort nat.Port
+	Host      string
+	Rpc       *rpc.RpcTransport
+	config    DogeTestConfig
+	Container testcontainers.Container
 }
 
 type DogeTestConfig struct {
@@ -104,11 +111,6 @@ func (d *DogeTest) ConfirmBlocks() ([]string, error) {
 }
 
 func (d *DogeTest) Start() error {
-	absPathContext, err := filepath.Abs(filepath.Join("."))
-	if err != nil {
-		return err
-	}
-
 	portVal := strconv.Itoa(d.config.Port)
 
 	logConsumers := []testcontainers.LogConsumer{}
@@ -133,10 +135,22 @@ func (d *DogeTest) Start() error {
 		networks = append(networks, net.Name)
 	}
 
+	dockerfilePath, err := WriteDockerfileToDisk()
+	if err != nil {
+		return err
+	}
+
+	dockerFolderPath := filepath.Dir(dockerfilePath)
+	dockerFilename := filepath.Base(dockerfilePath)
+
+	log.Println("Dockerfile path:", dockerfilePath)
+	log.Println("Dockerfile folder path:", dockerFolderPath)
+	log.Println("Dockerfile filename:", dockerFilename)
+
 	req := testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{
-			Context:    absPathContext,
-			Dockerfile: "Dockerfile.dogecoin",
+			Context:    dockerFolderPath,
+			Dockerfile: dockerFilename,
 			KeepImage:  false,
 			BuildArgs: map[string]*string{
 				"PORT": &portVal,
@@ -192,8 +206,6 @@ func (d *DogeTest) Start() error {
 
 	d.Container = dogecoinContainer
 
-	d.MappedPort = mappedPort
-
 	d.Rpc = rpc.NewRpcTransport(&rpc.Config{
 		RpcUrl:  "http://" + d.config.Host + ":" + mappedPort.Port(),
 		RpcUser: "test",
@@ -206,4 +218,23 @@ func (d *DogeTest) Start() error {
 func (d *DogeTest) Stop() error {
 	d.Container.Terminate(context.Background())
 	return nil
+}
+
+func WriteDockerfileToDisk() (string, error) {
+	tempDir := path.Join(os.TempDir(), "dogetest") + strconv.Itoa(rand.Intn(1000000))
+	err := os.MkdirAll(tempDir, 0755)
+	if err != nil {
+		return "", err
+	}
+
+	tmpfile, err := os.CreateTemp(tempDir, "Dockerfile-*")
+	if err != nil {
+		return "", err
+	}
+	if _, err := tmpfile.Write(dockerfileData); err != nil {
+		tmpfile.Close()
+		return "", err
+	}
+	tmpfile.Close()
+	return tmpfile.Name(), nil
 }
