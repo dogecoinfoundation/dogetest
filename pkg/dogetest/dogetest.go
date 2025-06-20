@@ -3,7 +3,6 @@ package dogetest
 import (
 	"context"
 	"fmt"
-	"net"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -16,10 +15,11 @@ import (
 )
 
 type DogeTest struct {
-	Host      string
-	Rpc       *rpc.RpcTransport
-	config    DogeTestConfig
-	Container testcontainers.Container
+	Host       string
+	Rpc        *rpc.RpcTransport
+	config     DogeTestConfig
+	Container  testcontainers.Container
+	MappedPort nat.Port
 }
 
 type DogeTestConfig struct {
@@ -192,6 +192,8 @@ func (d *DogeTest) Start() error {
 
 	d.Container = dogecoinContainer
 
+	d.MappedPort = mappedPort
+
 	d.Rpc = rpc.NewRpcTransport(&rpc.Config{
 		RpcUrl:  "http://" + d.config.Host + ":" + mappedPort.Port(),
 		RpcUser: "test",
@@ -204,15 +206,4 @@ func (d *DogeTest) Start() error {
 func (d *DogeTest) Stop() error {
 	d.Container.Terminate(context.Background())
 	return nil
-}
-
-func findAvailablePort(host string) (int, error) {
-	for port := 18000; port < 19000; port++ {
-		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
-		if err == nil {
-			l.Close()
-			return port, nil
-		}
-	}
-	return 0, fmt.Errorf("no available port found")
 }
