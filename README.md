@@ -9,6 +9,9 @@ DogeTest starts Dogecoin daemon in a docker container with temp storage, so each
 - Getting Wallet by address (balance etc.)
 - Function to generate a confirmed block
 
+# Windows support
+You will need to ensure Docker Desktop has WSL2 enabled.
+
 # Features to come
 - Functions to query the Doge system (i.e. transfers made, inspection of any signatures/scripts)
 - Functions to query wallet balances and addresses
